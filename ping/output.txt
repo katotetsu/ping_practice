@@ -1,0 +1,17 @@
+127.0.0.1 echoRequest AND echoReply:
+Echo Request Datagram:
+Type: 8
+Code: 0
+Checksum: CFB5
+ID: 36528
+Sequence Number: 0
+Echo Data: CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC 
+
+Echo Reply Datagram:
+Type: 0
+Code: 0
+Checksum: D7B5
+ID: 36528
+Sequence Number: 0
+Echo Data: CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC 
+
