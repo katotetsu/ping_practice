@@ -14,34 +14,47 @@ typedef struct {
     unsigned short seq;
 } ICMP_HEADER;
 
-unsigned short calculate_checksum(void* b, int len) {
+// チェックサムの計算（ネットワークバイトオーダーのまま計算）
+unsigned short calculate_checksum(void* b, int len, FILE* fp) {
     unsigned short* buf = b;
     unsigned long sum = 0;
 
+    fprintf(fp, "Checksum Calculation Start:\n");
+
     for (; len > 1; len -= 2) {
-        sum += *buf++;
+        unsigned short word = *buf++;
+        fprintf(fp, "Step %d: %04X + %04X = ", (len / 2), (unsigned short)sum, word);
+        sum += word;
+        fprintf(fp, "%04X\n", (unsigned short)sum);
+
+        // キャリオーバー処理
+        while (sum >> 16) {
+            sum = (sum & 0xFFFF) + (sum >> 16);
+            fprintf(fp, "Carry Adjustment: %04X\n", (unsigned short)sum);
+        }
     }
+
     if (len == 1) {
-        sum += *(unsigned char*)buf;
+        unsigned short last_byte = *(unsigned char*)buf;
+        sum += last_byte;
+        fprintf(fp, "Remaining Byte: + %02X = %04X\n", last_byte, (unsigned short)sum);
     }
-    sum = (sum >> 16) + (sum & 0xFFFF);
-    sum += (sum >> 16);
-    return ~sum;
+
+    unsigned short checksum = ~sum;
+    fprintf(fp, "Final Checksum (1's complement): %04X\n", checksum);
+
+    return checksum;
 }
 
+// データグラムの内容を出力
 void print_datagram(FILE* fp, const char* label, char* datagram, int len) {
     ICMP_HEADER* header = (ICMP_HEADER*)datagram;
     fprintf(fp, "%s\n", label);
     fprintf(fp, "Type: %d\n", header->type);
     fprintf(fp, "Code: %d\n", header->code);
-    fprintf(fp, "Checksum: %04X\n", ntohs(header->checksum));
-    fprintf(fp, "ID: %d\n", ntohs(header->id));
-    fprintf(fp, "Sequence Number: %d\n", ntohs(header->seq));
-    fprintf(fp, "Echo Data: ");
-    for (int i = sizeof(ICMP_HEADER); i < len; ++i) {
-        fprintf(fp, "%02X ", (unsigned char)datagram[i]);
-    }
-    fprintf(fp, "\n\n");
+    fprintf(fp, "Checksum: %04X\n", ntohs(header->checksum));  // ビッグエンディアン出力
+    fprintf(fp, "ID: %d\n", ntohs(header->id));                // ビッグエンディアン出力
+    fprintf(fp, "Sequence Number: %d\n", ntohs(header->seq));  // ビッグエンディアン出力
 }
 
 int main() {
@@ -49,7 +62,7 @@ int main() {
     SOCKET sock;
     struct sockaddr_in dest, from;
     ICMP_HEADER icmp_hdr;
-    char packet[32];
+    char packet[sizeof(ICMP_HEADER) + 2]; // パケットサイズを ICMP_HEADER + 2 バイトに設定
     char recvbuf[1024];
     int fromlen = sizeof(from);
     int bread, bwrote;
@@ -77,14 +90,28 @@ int main() {
     }
 
     fprintf(fp, "127.0.0.1 echoRequest AND echoReply:\n");
+
     memset(&icmp_hdr, 0, sizeof(icmp_hdr));
     icmp_hdr.type = 8;
     icmp_hdr.code = 0;
-    icmp_hdr.id = htons(GetCurrentProcessId());
-    icmp_hdr.seq = htons(0);
+    icmp_hdr.id = htons(GetCurrentProcessId());  // IDをビッグエンディアンで設定
+    icmp_hdr.seq = htons(0);                      // シーケンス番号もビッグエンディアンで設定
     memcpy(packet, &icmp_hdr, sizeof(icmp_hdr));
-    icmp_hdr.checksum = calculate_checksum(packet, sizeof(packet));
+
+    // Echo Data を追加（例として 0xCC 0xCC の2バイトで埋める）
+    packet[sizeof(ICMP_HEADER)] = 0xCC;
+    packet[sizeof(ICMP_HEADER) + 1] = 0xCC;
+
+    // チェックサムの計算と設定
+    icmp_hdr.checksum = calculate_checksum(packet, sizeof(packet), fp);
     memcpy(packet, &icmp_hdr, sizeof(icmp_hdr));
+
+    // 出力: 送信前のパケット内容
+    fprintf(fp, "Packet data before sending: ");
+    for (int i = 0; i < sizeof(packet); ++i) {
+        fprintf(fp, "%02X ", (unsigned char)packet[i]);
+    }
+    fprintf(fp, "\n");
 
     startTime = GetTickCount();
     bwrote = sendto(sock, packet, sizeof(packet), 0, (SOCKADDR*)&dest, sizeof(dest));
@@ -97,15 +124,16 @@ int main() {
     }
 
     print_datagram(fp, "Echo Request Datagram:", packet, sizeof(packet));
+
     bread = recvfrom(sock, recvbuf, sizeof(recvbuf), 0, (SOCKADDR*)&from, &fromlen);
     endTime = GetTickCount();
     if (bread == SOCKET_ERROR) {
         fprintf(fp, "Receive failed with error: %d\n", WSAGetLastError());
     }
     else {
-        // Adjust pointer to skip IP header
         int ipHeaderLength = (recvbuf[0] & 0x0F) * 4;
         print_datagram(fp, "Echo Reply Datagram:", recvbuf + ipHeaderLength, bread - ipHeaderLength);
+        fprintf(fp, "Round-trip time: %ld ms\n", endTime - startTime);
     }
 
     fclose(fp);

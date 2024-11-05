@@ -1,17 +1,23 @@
 127.0.0.1 echoRequest AND echoReply:
+Checksum Calculation Start:
+Step 5: 0000 + 0008 = 0008
+Step 4: 0008 + 0000 = 0008
+Step 3: 0008 + C46E = C476
+Step 2: C476 + 0000 = C476
+Step 1: C476 + CCCC = 9142
+Carry Adjustment: 9143
+Final Checksum (1's complement): 6EBC
+Packet data before sending: 08 00 BC 6E 6E C4 00 00 CC CC 
 Echo Request Datagram:
 Type: 8
 Code: 0
-Checksum: CFB5
-ID: 36528
+Checksum: BC6E
+ID: 28356
 Sequence Number: 0
-Echo Data: CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC 
-
 Echo Reply Datagram:
 Type: 0
 Code: 0
-Checksum: D7B5
-ID: 36528
+Checksum: C46E
+ID: 28356
 Sequence Number: 0
-Echo Data: CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC 
-
+Round-trip time: 0 ms
