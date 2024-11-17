@@ -1,7 +1,9 @@
-#include <winsock2.h>
+ï»¿#include <winsock2.h>
 #include <ws2tcpip.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h> // åˆ†æ•£è¨ˆç®—ç”¨
+#include <windows.h> // é«˜ç²¾åº¦ã‚¿ã‚¤ãƒžãƒ¼ç”¨
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -13,7 +15,7 @@ typedef struct {
     unsigned short seq;
 } ICMP_HEADER;
 
-// ƒ`ƒFƒbƒNƒTƒ€‚ÌŒvŽZ
+// ãƒã‚§ãƒƒã‚¯ã‚µãƒ ã®è¨ˆç®—
 unsigned short calculate_checksum(void* b, int len) {
     unsigned short* buf = b;
     unsigned long sum = 0;
@@ -30,15 +32,15 @@ unsigned short calculate_checksum(void* b, int len) {
     return ~sum;
 }
 
-// ƒf[ƒ^ƒOƒ‰ƒ€‚Ì“à—e‚ðƒ^[ƒ~ƒiƒ‹‚Éo—Í
+// ãƒ‡ãƒ¼ã‚¿ã‚°ãƒ©ãƒ ã®å†…å®¹ã‚’ã‚¿ãƒ¼ãƒŸãƒŠãƒ«ã«å‡ºåŠ›
 void print_datagram(const char* label, char* datagram, int len) {
     ICMP_HEADER* header = (ICMP_HEADER*)datagram;
     printf("%s\n", label);
     printf("Type: %d\n", header->type);
     printf("Code: %d\n", header->code);
-    printf("Checksum: %04X\n", ntohs(header->checksum)); 
-    printf("ID: %d\n", ntohs(header->id));                
-    printf("Sequence Number: %d\n", ntohs(header->seq));  
+    printf("Checksum: %04X\n", ntohs(header->checksum));
+    printf("ID: %d\n", ntohs(header->id));
+    printf("Sequence Number: %d\n", ntohs(header->seq));
     printf("Echo Data: ");
     for (int i = sizeof(ICMP_HEADER); i < len; ++i) {
         printf("%02X ", (unsigned char)datagram[i]);
@@ -51,10 +53,17 @@ int main() {
     SOCKET sock;
     struct sockaddr_in dest, from;
     ICMP_HEADER icmp_hdr;
-    char packet[sizeof(ICMP_HEADER) + 2]; // ƒpƒPƒbƒgƒTƒCƒY‚ð ICMP_HEADER + 2 ƒoƒCƒg‚ÉÝ’è
+    char packet[sizeof(ICMP_HEADER) + 2];
     char recvbuf[1024];
     int fromlen = sizeof(from);
     int bread, bwrote;
+
+    LARGE_INTEGER frequency, startTime, endTime;
+    QueryPerformanceFrequency(&frequency); // é«˜ç²¾åº¦ã‚¿ã‚¤ãƒžãƒ¼ã®å‘¨æ³¢æ•°ã‚’å–å¾—
+
+    double rtt, totalRTT = 0, totalRTTSquared = 0;
+    int successCount = 0;
+    int rttValues[30] = { 0 };
 
     WSAStartup(MAKEWORD(2, 2), &wsaData);
     sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
@@ -68,48 +77,66 @@ int main() {
     dest.sin_family = AF_INET;
     inet_pton(AF_INET, "8.8.8.8", &dest.sin_addr);
 
-    memset(&icmp_hdr, 0, sizeof(icmp_hdr));
-    icmp_hdr.type = 8;
-    icmp_hdr.code = 0;
-    icmp_hdr.id = htons(0);  
-    icmp_hdr.seq = htons(0); 
-    memcpy(packet, &icmp_hdr, sizeof(icmp_hdr));
+    for (int i = 0; i < 10; ++i) {
+        memset(&icmp_hdr, 0, sizeof(icmp_hdr));
+        icmp_hdr.type = 8;
+        icmp_hdr.code = 0;
+        icmp_hdr.id = htons(0);
+        icmp_hdr.seq = htons(i);
+        memcpy(packet, &icmp_hdr, sizeof(icmp_hdr));
 
-    // Echo Data ‚ð’Ç‰Ái—á‚Æ‚µ‚Ä 0xCC 0xCC ‚Ì2ƒoƒCƒg‚Å–„‚ß‚éj
-    packet[sizeof(ICMP_HEADER)] = 0xCC;
-    packet[sizeof(ICMP_HEADER) + 1] = 0xCC;
+        packet[sizeof(ICMP_HEADER)] = 0xCC;
+        packet[sizeof(ICMP_HEADER) + 1] = 0xCC;
 
-    // ƒ`ƒFƒbƒNƒTƒ€‚ÌŒvŽZ‚ÆÝ’è
-    icmp_hdr.checksum = calculate_checksum(packet, sizeof(packet));
-    memcpy(packet, &icmp_hdr, sizeof(icmp_hdr));
+        icmp_hdr.checksum = calculate_checksum(packet, sizeof(packet));
+        memcpy(packet, &icmp_hdr, sizeof(icmp_hdr));
 
-    // ‘—M‘O‚ÌƒpƒPƒbƒg“à—e‚ðo—Í
-    printf("Packet data before sending: ");
-    for (int i = 0; i < sizeof(packet); ++i) {
-        printf("%02X ", (unsigned char)packet[i]);
+        printf("Packet data before sending (Sequence %d): ", i);
+        for (int j = 0; j < sizeof(packet); ++j) {
+            printf("%02X ", (unsigned char)packet[j]);
+        }
+        printf("\n");
+
+        QueryPerformanceCounter(&startTime); // é–‹å§‹æ™‚é–“ã‚’å–å¾—
+        bwrote = sendto(sock, packet, sizeof(packet), 0, (SOCKADDR*)&dest, sizeof(dest));
+        if (bwrote == SOCKET_ERROR) {
+            fprintf(stderr, "ICMP Echo Request failed with error: %d\n", WSAGetLastError());
+            closesocket(sock);
+            WSACleanup();
+            return 1;
+        }
+
+        bread = recvfrom(sock, recvbuf, sizeof(recvbuf), 0, (SOCKADDR*)&from, &fromlen);
+        QueryPerformanceCounter(&endTime); // çµ‚äº†æ™‚é–“ã‚’å–å¾—
+
+        if (bread == SOCKET_ERROR) {
+            fprintf(stderr, "Receive failed for Sequence %d with error: %d\n", i, WSAGetLastError());
+        }
+        else {
+            int ipHeaderLength = (recvbuf[0] & 0x0F) * 4;
+            print_datagram("Echo Reply Datagram:", recvbuf + ipHeaderLength, bread - ipHeaderLength);
+
+            // RTT è¨ˆç®— (ãƒžã‚¤ã‚¯ãƒ­ç§’å˜ä½)
+            rtt = (double)(endTime.QuadPart - startTime.QuadPart) * 1e6 / frequency.QuadPart;
+            printf("RTT for Sequence %d: %.2f Âµs\n", i, rtt);
+
+            rttValues[successCount] = (int)rtt;
+            totalRTT += rtt;
+            totalRTTSquared += rtt * rtt;
+            ++successCount;
+        }
+
+        Sleep(1000);
     }
-    printf("\n");
 
-    // Echo Request ‘—M
-    bwrote = sendto(sock, packet, sizeof(packet), 0, (SOCKADDR*)&dest, sizeof(dest));
-    if (bwrote == SOCKET_ERROR) {
-        fprintf(stderr, "ICMP Echo Request failed with error: %d\n", WSAGetLastError());
-        closesocket(sock);
-        WSACleanup();
-        return 1;
-    }
+    double meanRTT = (successCount > 0) ? (totalRTT / successCount) : 0;
+    double varianceRTT = (successCount > 1) ? (totalRTTSquared / successCount - meanRTT * meanRTT) : 0;
 
-    // Echo Request ƒf[ƒ^ƒOƒ‰ƒ€‚ð•\Ž¦
-    print_datagram("Echo Request Datagram:", packet, sizeof(packet));
-
-    // Echo Reply ‚ÌŽóM
-    bread = recvfrom(sock, recvbuf, sizeof(recvbuf), 0, (SOCKADDR*)&from, &fromlen);
-    if (bread == SOCKET_ERROR) {
-        fprintf(stderr, "Receive failed with error: %d\n", WSAGetLastError());
-    }
-    else {
-        int ipHeaderLength = (recvbuf[0] & 0x0F) * 4;
-        print_datagram("Echo Reply Datagram:", recvbuf + ipHeaderLength, bread - ipHeaderLength);
+    printf("\nPing Statistics:\n");
+    printf("Packets: Sent = 30, Received = %d, Lost = %d (%.2f%% loss)\n", successCount, 30 - successCount, ((30 - successCount) / 30.0) * 100);
+    if (successCount > 0) {
+        printf("Average RTT: %.2f Âµs\n", meanRTT);
+        printf("Variance RTT: %.2f ÂµsÂ²\n", varianceRTT);
     }
 
     closesocket(sock);
