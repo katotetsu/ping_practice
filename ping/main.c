@@ -7,6 +7,10 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
+#define NUM_PINGS 5
+//#define TARGET_IP "172.20.10.3"  // ここでターゲットのIPアドレスを定義
+#define TARGET_IP "8.8.8.8"  // ここでターゲットのIPアドレスを定義
+
 typedef struct {
     unsigned char type;
     unsigned char code;
@@ -61,9 +65,16 @@ int main() {
     LARGE_INTEGER frequency, startTime, endTime;
     QueryPerformanceFrequency(&frequency); // 高精度タイマーの周波数を取得
 
+    if (QueryPerformanceFrequency(&frequency)) {
+        printf("Performance Counter Frequency: %lld Hz\n", frequency.QuadPart);
+    }
+    else {
+        printf("Performance Counter not supported.\n");
+    }
+
     double rtt, totalRTT = 0, totalRTTSquared = 0;
     int successCount = 0;
-    int rttValues[30] = { 0 };
+    int rttValues[NUM_PINGS]; // 配列のサイズをNUM_PINGSに変更
 
     WSAStartup(MAKEWORD(2, 2), &wsaData);
     sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
@@ -75,11 +86,11 @@ int main() {
 
     memset(&dest, 0, sizeof(dest));
     dest.sin_family = AF_INET;
-    inet_pton(AF_INET, "8.8.8.8", &dest.sin_addr);
+    inet_pton(AF_INET, TARGET_IP, &dest.sin_addr);
 
-    for (int i = 0; i < 10; ++i) {
+    for (int i = 1; i <= NUM_PINGS; ++i) {
         memset(&icmp_hdr, 0, sizeof(icmp_hdr));
-        icmp_hdr.type = 8;
+        icmp_hdr.type = 8; // Echo Request
         icmp_hdr.code = 0;
         icmp_hdr.id = htons(0);
         icmp_hdr.seq = htons(i);
@@ -90,12 +101,6 @@ int main() {
 
         icmp_hdr.checksum = calculate_checksum(packet, sizeof(packet));
         memcpy(packet, &icmp_hdr, sizeof(icmp_hdr));
-
-        printf("Packet data before sending (Sequence %d): ", i);
-        for (int j = 0; j < sizeof(packet); ++j) {
-            printf("%02X ", (unsigned char)packet[j]);
-        }
-        printf("\n");
 
         QueryPerformanceCounter(&startTime); // 開始時間を取得
         bwrote = sendto(sock, packet, sizeof(packet), 0, (SOCKADDR*)&dest, sizeof(dest));
@@ -114,11 +119,21 @@ int main() {
         }
         else {
             int ipHeaderLength = (recvbuf[0] & 0x0F) * 4;
+            ICMP_HEADER* recv_header = (ICMP_HEADER*)(recvbuf + ipHeaderLength);
             print_datagram("Echo Reply Datagram:", recvbuf + ipHeaderLength, bread - ipHeaderLength);
+
+            // シーケンス番号をチェック
+            if (ntohs(recv_header->seq) == i) {
+                printf("Sequence number matches: %d\n", i);
+            }
+            else {
+                printf("Sequence number mismatch: expected %d, got %d\n", i, ntohs(recv_header->seq));
+                continue;
+            }
 
             // RTT 計算 (マイクロ秒単位)
             rtt = (double)(endTime.QuadPart - startTime.QuadPart) * 1e6 / frequency.QuadPart;
-            printf("RTT for Sequence %d: %.2f µs\n", i, rtt);
+            printf("RTT for Sequence %d: %.2f microseconds\n", i, rtt);
 
             rttValues[successCount] = (int)rtt;
             totalRTT += rtt;
@@ -126,17 +141,17 @@ int main() {
             ++successCount;
         }
 
-        Sleep(1000);
+        Sleep(1000); // 1秒待機
     }
 
     double meanRTT = (successCount > 0) ? (totalRTT / successCount) : 0;
     double varianceRTT = (successCount > 1) ? (totalRTTSquared / successCount - meanRTT * meanRTT) : 0;
 
     printf("\nPing Statistics:\n");
-    printf("Packets: Sent = 30, Received = %d, Lost = %d (%.2f%% loss)\n", successCount, 30 - successCount, ((30 - successCount) / 30.0) * 100);
+    printf("Packets: Sent = %d, Received = %d, Lost = %d (%.2f%% loss)\n", NUM_PINGS, successCount, NUM_PINGS - successCount, ((NUM_PINGS - successCount) / (double)NUM_PINGS) * 100);
     if (successCount > 0) {
-        printf("Average RTT: %.2f µs\n", meanRTT);
-        printf("Variance RTT: %.2f µs²\n", varianceRTT);
+        printf("Average RTT: %.2f microseconds\n", meanRTT);
+        printf("Variance RTT: %.2f microseconds squared\n", varianceRTT);
     }
 
     closesocket(sock);
