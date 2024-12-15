@@ -7,9 +7,9 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
-#define NUM_PINGS 5
-//#define TARGET_IP "172.20.10.3"  // ここでターゲットのIPアドレスを定義
-#define TARGET_IP "8.8.8.8"  // ここでターゲットのIPアドレスを定義
+#define NUM_PINGS 30 //Ping送信の回数を定義
+//#define TARGET_IP "172.20.10.3"  // 実験用IPアドレスを定義
+#define TARGET_IP "127.0.0.1"  // デバッグ用ループバックIPアドレスを定義
 
 typedef struct {
     unsigned char type;
